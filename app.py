@@ -1,16 +1,11 @@
 import streamlit as st
-import time
 
 st.set_page_config(page_title="Go RPC Chat Room", page_icon="💬", layout="centered")
 
-# 1. مخزن الرسائل الجماعي المشترك
-@st.cache_resource
-def get_global_chat_history():
-    return []
+# استخدام st.session_state بشكل مركزي بدلاً من الـ cache المشترك لتجنب انفصال الذاكرة بين الأجهزة على السحابة
+if "global_chat" not in st.session_state:
+    st.session_state.global_chat = []
 
-global_messages = get_global_chat_history()
-
-# 2. إدارة جلسة المستخدم
 if "username" not in st.session_state:
     st.session_state.username = None
 
@@ -29,7 +24,7 @@ if not st.session_state.username:
                 "sender": "System",
                 "text": f"*** {st.session_state.username} انضم إلى غرفة المحادثة ***"
             }
-            global_messages.append(join_msg)
+            st.session_state.global_chat.append(join_msg)
             st.rerun()
         else:
             st.warning("رجاءً اكتب اسم مستخدم صحيح قبل الاستمرار.")
@@ -41,8 +36,8 @@ else:
     
     st.divider()
 
-    # عرض جميع الرسائل مباشرة
-    for msg in global_messages:
+    # عرض جميع الرسائل الموجودة في الجلسة الحالية
+    for msg in st.session_state.global_chat:
         if msg["role"] == "system":
             st.info(msg["text"])
         else:
@@ -52,13 +47,12 @@ else:
             with st.chat_message(role_type):
                 st.write(f"**{msg['sender']}**: {msg['text']}")
 
-    # صندوق إرسال الرسائل الجديد
+    # صندوق إرسال الرسائل
     if prompt := st.chat_input("اكتب رسالتك هنا..."):
         new_msg = {
             "role": "user",
             "sender": st.session_state.username,
             "text": prompt
         }
-        global_messages.append(new_msg)
-        # إعادة تحميل الصفحة فوراً لكي تظهر رسالتك في الشات حالاً دون انتظار أحد
+        st.session_state.global_chat.append(new_msg)
         st.rerun()
