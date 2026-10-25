@@ -1,102 +1,63 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
-	"net/rpc"
 	"sync"
 )
 
-type ChatMessage struct {
-	User string
-	Body string
+type Message struct {
+	Sender string `json:"Sender"`
+	Text   string `json:"Text"`
 }
 
-type ConnectArgs struct {
-	Name string
-}
+var (
+	mu       sync.Mutex
+	messages []Message
+)
 
-type ChatServer struct {
-	mu      sync.Mutex
-	clients map[string]chan ChatMessage
-}
+func handleChat(w http.ResponseWriter, r *http.Request) {
+	// السماح بالاتصال من أي مصدر (CORS)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
-func (s *ChatServer) Join(args ConnectArgs, res *string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, exists := s.clients[args.Name]; exists {
-		*res = "EXISTS"
-		return nil
-	}
-
-	s.clients[args.Name] = make(chan ChatMessage, 100)
-	*res = "WELCOME"
-
-	s.broadcast(ChatMessage{User: "System", Body: args.Name + " has joined the chat."})
-	fmt.Println("User joined:", args.Name)
-	return nil
-}
-
-func (s *ChatServer) Leave(args ConnectArgs, ok *bool) error {
-	s.mu.Lock()
-	if ch, exists := s.clients[args.Name]; exists {
-		close(ch)
-		delete(s.clients, args.Name)
-	}
-	s.mu.Unlock()
-
-	s.broadcast(ChatMessage{User: "System", Body: args.Name + " has left the chat."})
-	fmt.Println("User left:", args.Name)
-	*ok = true
-	return nil
-}
-
-func (s *ChatServer) Send(m ChatMessage, ok *bool) error {
-	s.broadcast(m)
-	*ok = true
-	return nil
-}
-
-func (s *ChatServer) Receive(args ConnectArgs, reply *ChatMessage) error {
-	s.mu.Lock()
-	ch, exists := s.clients[args.Name]
-	s.mu.Unlock()
-
-	if !exists {
-		return fmt.Errorf("client not found")
-	}
-
-	msg := <-ch
-	*reply = msg
-	return nil
-}
-
-func (s *ChatServer) broadcast(m ChatMessage) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, ch := range s.clients {
-		select {
-		case ch <- m:
-		default:
+	// استقبال رسالة جديدة (POST)
+	if r.Method == "POST" {
+		var msg Message
+		err := json.NewDecoder(r.Body).Decode(&msg)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
+
+		mu.Lock()
+		messages = append(messages, msg)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		return
+	}
+
+	// جلب كل الرسائل (GET)
+	if r.Method == "GET" {
+		mu.Lock()
+		defer mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(messages)
+		return
 	}
 }
 
 func main() {
-	srv := &ChatServer{
-		clients: make(map[string]chan ChatMessage),
-	}
-	rpc.Register(srv)
-	rpc.HandleHTTP()
+	http.HandleFunc("/messages", handleChat)
 
-	l, err := net.Listen("tcp", ":1234")
+	port := ":1234"
+	fmt.Printf("HTTP Chat Server running on port %s...\n", port)
+	err := http.ListenAndServe(port, nil)
 	if err != nil {
-		fmt.Println("Server error")
-		return
+		fmt.Println("Server error:", err)
 	}
-
-	fmt.Println(" Server running ")
-	http.Serve(l, nil)
 }
