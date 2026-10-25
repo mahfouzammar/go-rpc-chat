@@ -1,119 +1,90 @@
-import os
-
-import requests
+import json
+import urllib.request
 import streamlit as st
 
-st.set_page_config(page_title="Go Chat", page_icon="💬")
+# إذا كان السيرفر يعمل محلياً استخدم localhost، وإذا رفعت التطبيق على السحاب ضع رابط سيرفر الـ Go العام هنا
+GO_SERVER_URL = "http://localhost:1234/messages"
+
+st.set_page_config(page_title="Go Chat Room", page_icon="💬", layout="centered")
 
 
-def get_server_url() -> str:
-    # على Streamlit Cloud: حطه في Settings -> Secrets  (SERVER_URL = "https://...")
+def fetch_messages_from_go():
     try:
-        return st.secrets["SERVER_URL"].rstrip("/")
+        req = urllib.request.Request(GO_SERVER_URL, method="GET")
+        with urllib.request.urlopen(req, timeout=3) as response:
+            return json.loads(response.read().decode("utf-8"))
     except Exception:
-        return os.environ.get("SERVER_URL", "http://localhost:1234").rstrip("/")
+        return []
 
 
-SERVER_URL = get_server_url()
+def send_message_to_go(sender, text):
+    try:
+        payload = json.dumps({"Sender": sender, "Text": text}).encode("utf-8")
+        req = urllib.request.Request(
+            GO_SERVER_URL,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3) as response:
+            return response.status == 200
+    except Exception:
+        return False
 
 
-def api(method: str, path: str, **kwargs):
-    r = requests.request(method, SERVER_URL + path, timeout=8, **kwargs)
-    r.raise_for_status()
-    return r.json()
+if "username" not in st.session_state:
+    st.session_state.username = None
 
+# --- الشاشة الأولى: تسجيل الدخول ---
+if not st.session_state.username:
+    st.title("💬 غرفة المحادثة الجماعية")
+    st.subheader("أدخل اسمك للانضمام إلى الغرفة")
 
-def reset_session(message: str | None = None):
-    st.session_state.name = None
-    st.session_state.messages = []
-    if message:
-        st.session_state.notice = message
+    input_name = st.text_input("اسم المستخدم:", placeholder="اكتب اسمك هنا...")
 
-
-# ---------- state ----------
-st.session_state.setdefault("name", None)
-st.session_state.setdefault("messages", [])
-st.session_state.setdefault("notice", None)
-
-# ---------- شاشة الدخول ----------
-if not st.session_state.name:
-    st.title("💬 Go Chat")
-
-    if st.session_state.notice:
-        st.warning(st.session_state.notice)
-        st.session_state.notice = None
-
-    with st.form("join_form"):
-        typed_name = st.text_input("اكتب اسمك / Enter your name")
-        submitted = st.form_submit_button("Join")
-
-    if submitted:
-        typed_name = typed_name.strip()
-        if not typed_name:
-            st.warning("لازم تكتب اسمك الأول.")
+    if st.button("انضمام 🚀"):
+        if input_name.strip():
+            st.session_state.username = input_name.strip()
+            send_message_to_go(
+                "System",
+                f"*** {st.session_state.username} انضم إلى الغرفة ***",
+            )
+            st.rerun()
         else:
-            try:
-                res = api("POST", "/api/join", json={"name": typed_name})
-            except requests.RequestException:
-                st.error("مش قادر أوصل للسيرفر. اتأكد إنه شغال.")
-            else:
-                if res["status"] == "EXISTS":
-                    st.error("الاسم ده مستخدم، اختار اسم تاني.")
-                else:
-                    st.session_state.name = typed_name
-                    st.rerun()
-    st.stop()
+            st.warning("رجاءً اكتب اسم مستخدم صحيح قبل الانضمام.")
 
-# ---------- شاشة الشات ----------
-me = st.session_state.name
-st.title("💬 Go Chat")
+# --- الشاشة الثانية: واجهة الشات ---
+else:
+    st.title("💬 غرفة المحادثة")
+    st.caption(f"متصل باسم: **{st.session_state.username}**")
 
-with st.sidebar:
-    st.markdown(f"أنت داخل باسم: **{me}**")
-    if st.button("Leave"):
-        try:
-            api("POST", "/api/leave", json={"name": me})
-        except requests.RequestException:
-            pass
-        reset_session()
+    if st.button("🔄 تحديث الرسائل"):
         st.rerun()
 
+    st.divider()
 
-@st.fragment(run_every=2)
-def chat_view():
-    # بنسحب الرسائل الجديدة كل ثانيتين
-    try:
-        new_messages = api("GET", "/api/poll", params={"name": me})
-    except requests.HTTPError as e:
-        if e.response is not None and e.response.status_code == 404:
-            reset_session("الجلسة خلصت، ادخل اسمك تاني.")
-            st.rerun()
-        new_messages = []
-    except requests.RequestException:
-        st.warning("فقدت الاتصال بالسيرفر... بحاول تاني.")
-        new_messages = []
+    # جلب الرسائل وعرضها
+    messages = fetch_messages_from_go()
 
-    for m in new_messages:
-        if m["user"] != me:  # رسائلي أنا بتتضاف محلياً لحظة الإرسال
-            st.session_state.messages.append(m)
+    if not messages:
+        st.info(
+            "لا توجد رسائل حالياً، أو جاري الاتصال بالسيرفر... (تأكد أن سيرفر Go يعمل)."
+        )
 
-    for m in st.session_state.messages:
-        if m["user"] == "System":
-            st.caption(f"🔔 {m['body']}")
+    for msg in messages:
+        sender = msg.get("Sender", "")
+        text = msg.get("Text", "")
+
+        if sender == "System":
+            st.info(text)
         else:
-            mine = m["user"] == me
-            with st.chat_message(m["user"], avatar="🙂" if mine else "👤"):
-                st.markdown(f"**{m['user']}**")
-                st.write(m["body"])
+            is_me = sender == st.session_state.username
+            role_type = "user" if is_me else "assistant"
 
+            with st.chat_message(role_type):
+                st.write(f"**{sender}**: {text}")
 
-prompt = st.chat_input("اكتب رسالتك...")
-if prompt:
-    try:
-        api("POST", "/api/send", json={"user": me, "body": prompt})
-    except requests.RequestException:
-        st.error("الرسالة ماتبعتتش.")
-    else:
-        st.session_state.messages.append({"user": me, "body": prompt})
-
-chat_view()
+    # إرسال رسالة جديدة
+    if prompt := st.chat_input("اكتب رسالتك هنا..."):
+        send_message_to_go(st.session_state.username, prompt)
+        st.rerun()
