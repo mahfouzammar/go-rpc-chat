@@ -2,7 +2,6 @@ import json
 import urllib.request
 import streamlit as st
 
-# إذا كان السيرفر يعمل محلياً استخدم localhost، وإذا رفعت التطبيق على السحاب ضع رابط سيرفر الـ Go العام هنا
 GO_SERVER_URL = "http://localhost:1234/messages"
 
 st.set_page_config(page_title="Go Chat Room", page_icon="💬", layout="centered")
@@ -51,11 +50,11 @@ if not st.session_state.username:
             )
             st.rerun()
         else:
-            st.warning("رجاءً اكتب اسم مستخدم صحيح قبل الانضمام.")
+            st.warning("رجاءً اكتب اسم مستخدم صحيح.")
 
 # --- الشاشة الثانية: واجهة الشات ---
 else:
-    st.title("💬 غرفة المحادثة")
+    st.title("💬 غرفة المحادثة الجماعية")
     st.caption(f"متصل باسم: **{st.session_state.username}**")
 
     if st.button("🔄 تحديث الرسائل"):
@@ -63,13 +62,8 @@ else:
 
     st.divider()
 
-    # جلب الرسائل وعرضها
+    # جلب الرسائل وعرضها للجميع بالتساوي
     messages = fetch_messages_from_go()
-
-    if not messages:
-        st.info(
-            "لا توجد رسائل حالياً، أو جاري الاتصال بالسيرفر... (تأكد أن سيرفر Go يعمل)."
-        )
 
     for msg in messages:
         sender = msg.get("Sender", "")
